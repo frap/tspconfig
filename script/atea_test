@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+bb -cp "src:test:resources" \
+   -e "(require '[clojure.test :as t] '[atea.tspconfig-test])
+       (let [{:keys [:fail :error]} (t/run-tests 'atea.tspconfig-test)]
+         (System/exit (+  fail error)))"
