@@ -4,7 +4,8 @@
             [clojure.string :as str]
             [clojure.tools.cli :refer [parse-opts]]
             [clojure.java.shell :refer [sh]]
-            [babashka.process :refer [$ check]])
+            ;[babashka.process :refer [$ check]]
+            )
   (:import [java.lang ProcessBuilder$Redirect]
            [java.net URL HttpURLConnection]
            [java.nio.file Files FileSystems CopyOption])
@@ -20,6 +21,17 @@
   {:red   "[31m"
    :green "[32m"
    :reset "[0m"})
+
+(defn is-redhat?
+  [{:keys [release-file] :or {release-file "/etc/redhat-release"}}]
+   (.exists (io/file release-file)))
+
+(defn redhat-version
+  [{:keys [release-file] :or {release-file "/etc/redhat-release"}}]
+  (if (is-redhat? {:release-file release-file})
+    (first (re-seq #"\d\.\d" (slurp release-file)))
+    "N/A"
+    ))
 
 (defn ansi [style]
   (str \u001b (style ansi-styles)))
@@ -126,6 +138,7 @@ invoke a command-line of the form:
      :dhcp     dhcp })
   )
 
+
 (defn normalise-test-result [result]
   "bash test results return 0 if true and -1 if false"
    (= result 0)
@@ -137,16 +150,16 @@ invoke a command-line of the form:
 (defn parse-customer-config [config]
   (let [[_ company]  (re-find #"Company Name.+:\s+([A-Za-z0-9\-]+)\n" config)
         [_ email]    (re-find #"Customer Email.+:\s+([A-Za-z0-9\-@\.]+)\n" config)
-        [_ hostname] (re-find #"Hostname.+:\s+([A-Za-z0-9]+)\n" config)
-        [_ ip]       (re-find #"IP Address.+:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})\n" config)
-        [_ mask]     (re-find #"Subnet Mask.+:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})" config)
-        [_ gw]       (re-find #"DefaultGateway.+:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})+" config)
-        [_ dns]      (re-find #"DNS Server.+:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})+" config)
-        [_ smtp]     (re-find #"SMTP Server.+:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})+\n" config)
-        [_ time]     (re-find #"Time Zone.+:\s+([\w/]+)\n" config)
-        [_ ntp]      (re-find #"NTP Server.+:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})+\n" config)
-        [_ cucmhost] (re-find #"CUCM Hostname.+:\s+([A-Za-z0-9\-]+)[a-z0-9].*\n" config)
-        [_ cucmip]   (re-find #"CUCM Server.+:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})+\n" config)
+        [_ hostname] (re-find #"Hostname\s?:\s+([A-Za-z0-9]+)\n" config)
+        [_ ip]       (re-find #"IP Address\s?:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})\n" config)
+        [_ mask]     (re-find #"Subnet Mask\s?:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})\n" config)
+        [_ gw]       (re-find #"DefaultGateway\s?:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})+" config)
+        [_ dns]      (re-find #"DNS Server\s?:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})[\s,]?" config)
+        [_ smtp]     (re-find #"SMTP Server\s?:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})+\n" config)
+        [_ time]     (re-find #"Time Zone\s?:\s+([\w/]+)\n" config)
+        [_ ntp]      (re-find #"NTP Server\s?:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})+\n" config)
+        [_ cucmhost] (re-find #"CUCM Hostname\s?:\s+([A-Za-z0-9\-]+)[a-z0-9].*\n" config)
+        [_ cucmip]   (re-find #"CUCM Server\s?:\s+((?:[0-9]{1,3}\.){3}[0-9]{1,3})+\n" config)
 
         ]
   {:customer   company
@@ -165,11 +178,15 @@ invoke a command-line of the form:
 
 (comment
 
-  (println (sh "ls" "-l"))
-  (println (sh "ls" "-l" "/no-such-thing")) 
+  (println (:out (sh "ls" "-l")))
+  (println (sh "ls" "-l" "/no-such-thing"))
   (println (sh "sed" "s/[aeiou]/oo/g" :in "hello there\n"))
-  (println (sh "sed" "s/[aeiou]/oo/g" :in (java.io.StringReader. "hello there\n")))
-; ...
+  (println (:out (sh "sed" "s/[aeiou]/oo/g" :in (java.io.StringReader. "hello there\n"))))
+  (println (shell-command "ls" "-l"))
+  (parse-customer-config "Company Name : test \n Hostname: test\nDNS Server : 10.1.1.1, 10.1.1.2\n NTP Server : 6.6.6.6, 10.66.66.3")
+  (println help-text)
+
+                                        ; ...
   )
 ;(-main)
 (defn -main [& command-line-args]
@@ -204,5 +221,3 @@ invoke a command-line of the form:
                        ))))]
     (println "exit config: " args)
     ))
-
-
