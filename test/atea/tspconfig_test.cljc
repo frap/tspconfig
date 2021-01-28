@@ -27,6 +27,7 @@
          example-cfg )))
 
 (deftest file-exists-test
+
   (is (=  (tspcfg/test-exists? "test/not-exists") false )))
 
 (deftest current-config-test
@@ -36,3 +37,9 @@
         (is (= "255.255.0.0" (:subnet SUT)) "should be exisitng subnet")
         (is (= "none"   (:dhcp SUT))    "Should be none")
         ))
+
+(deftest change-hostname-test
+  "Test to see if changes hostname"
+  (t/testing "testing change hostname"
+    (let [SUT (tspcfg/current-vm-config "test/hostname" "test/ifcfg-eth0" )]
+      (is (= (:hostname example-cfg) (:hostname SUT))))))

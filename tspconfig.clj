@@ -2,13 +2,13 @@
 
 ;; Generated with script/gen_script.clj. Do not edit directly.
 
-#!/usr/bin/env bb
 (ns atea.tspconfig
   (:require [clojure.java.io :as io]
-            [clojure.tools.cli :refer [parse-opts]]
             [clojure.set]
             [clojure.string :as str]
+            [clojure.tools.cli :refer [parse-opts]]
             [clojure.java.shell :refer [sh]]
+            ;[babashka.process :refer [$ check]]
             )
   (:import [java.lang ProcessBuilder$Redirect]
            [java.net URL HttpURLConnection]
@@ -20,12 +20,15 @@
         (-> (io/file "resources/TSPCONFIG_VERSION")
             (slurp)
             (str/trim))))
-
 (def ansi-styles
   {:red   "[31m"
    :green "[32m"
    :reset "[0m"})
 
+(defn is-redhat?
+  [{:keys [release-file] :or {release-file "/etc/redhat-release"}}]
+   (.exists (io/file release-file)))
+  
 (defn ansi [style]
   (str \u001b (style ansi-styles)))
 
@@ -33,8 +36,37 @@
   [text colour]
   (str (ansi colour) text (ansi :reset)))
 
+(def exit-codes
+  {:success      0
+   :args-error   4
+   :general-err  8})
 
-(def help-text (colourise (str "Version: " version "
+(defn exit-message
+  [message colour]
+  (colourise message colour))
+
+(defn system-exit!
+  [message exit-code]
+  (let [code (get exit-codes exit-code exit-code) ;; map key not-found
+        colour (if (= code 0) :green :red)]
+    (println (exit-message message colour))
+    (System/exit code)))
+
+(defn exec-command!
+  "execute babashka shell command(s)"
+  [cmd]
+  (let [{:keys [exit err out]} (sh "sh" "-c" cmd)]
+    (if (zero? exit)
+      (system-exit! out :success)
+      (let [msg (if (str/blank? err)
+                  (format "failed to execute command [%s]: exit code [%d]" cmd exit)
+                  err)]
+        (println msg)
+        (system-exit! msg exit)))))
+
+
+
+(def help-text (colourise (str "Version: " tspconfig-clj-version "
 Usage: tspconfig  [--] [init-opt*] [main-opt] [arg*]
        clj     [dep-opt*] [--] [init-opt*] [main-opt] [arg*]
 The tspconfig script is a script to set redhat networking features.
@@ -42,9 +74,9 @@ You can use a customers config from Atea's email or change some part
 of the config using command line options.
 invoke a command-line of the form:
 
--s                   Change host's hostname
--i                   Change host' IP address
--g                   Change host's IP Gateway
+-H --hostname        Change host's hostname
+-i --ipaddr          Change host' IP address
+-g --gateway         Change host's IP Gateway
  -                   Run a script from standard input
  -h, -?, --help      Print this help message and exit
 ") :green))
@@ -87,14 +119,18 @@ invoke a command-line of the form:
          (System/exit exit-code))
        string-out))))
 
-(defn current-vm-config [ network-cfg ]
-  (let [name      (-> (sh "cat" "/etc/hostname") :out str/trim )
+(defn current-vm-config [ hostname  network-cfg ]
+  (let [name      (-> (sh "cat" hostname) :out str/trim )
         network   (slurp network-cfg)
         [_ ip]    (re-find #"IPADDR=(.*)" network)
+        [_ gw]    (re-find #"GATEWAY=(.*)" network)
+        [_ net]   (re-find #"NETMASK=(.*)" network)
         [_ dhcp]  (re-find #"BOOTPROTO=(.*)" network)
         ]
     {:hostname name
      :ip       ip
+     :gateway  gw
+     :subnet   net
      :dhcp     dhcp })
   )
 
@@ -135,36 +171,49 @@ invoke a command-line of the form:
    :cucm-ip    cucmip
    }))
 
+(comment
 
+  (println (:out (sh "ls" "-l")))
+  (println (sh "ls" "-l" "/no-such-thing")) 
+  (println (sh "sed" "s/[aeiou]/oo/g" :in "hello there\n"))
+  (println (sh "sed" "s/[aeiou]/oo/g" :in (java.io.StringReader. "hello there\n")))
+  (println ())
+; ...
+  )
 ;(-main)
 (defn -main [& command-line-args]
-  (let args (loop [command-line-args (seq command-line-args)
+  (let [args (loop [command-line-args (seq command-line-args)
                     acc {}]
                (if command-line-args
-                 (let [arg (first command-line-args)]
+                 (let [arg (first command-line-args)
+                       string-opt-keyword (get parse-opts->keyword arg)]
                    (cond
-                    ;; (= "--" arg) (assoc acc :args (next command-line-args))
-                     (some #(str/starts-with? arg %) ["-s" "-i" "-g" "-n" "-t"])
-                     (recur (next command-line-args)
-                            (update acc (get parse-opts->keyword (subs arg 0 2))
-                                    str (subs arg 2)))
+                     string-opt-keyword (recur
+                                         (nnext command-line-args)
+                                         (assoc acc string-opt-keyword
+                                                (second command-line-args)))
                      (or (= "-h" arg)
                          (= "--help" arg)) (assoc acc :help true)
-                     :else (assoc acc :file command-line-args)))
+                     :else (assoc acc :file arg )))
                  acc))
-       _ (when (:help args)
+        - (println "args: " args)
+        _ (when (:help args)
             (println help-text)
-            (System/exit 0))
-       (when (:file args)
-         (let [f (io/file (:file args))]
-           (if (.exists f)
-             (do (println f " exists!")
-                 (System/exit 0))
-             (binding [*out* *err*]
-               (println f "does not exist")
-               (System/exit 1)))))
-       (println args))
-       )
-)
+            ;;(System/exit 0)
+            )
+        args (when (:file args)
+                 (let [f (io/file (:file args))]
+                   (if (.exists f)
+                     (merge args (parse-customer-config (slurp f))
+                            ;;(System/exit 0)
+                            )
+                     (binding [*out* *err*]
+                       (println f "does not exist")
+                       ;;(System/exit 1)
+                       ))))]
+    (println "exit config: " args)
+    ))
+
+
 
 (apply -main *command-line-args*)
